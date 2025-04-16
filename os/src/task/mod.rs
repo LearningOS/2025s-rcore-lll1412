@@ -17,6 +17,7 @@ mod task;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use alloc::collections::BTreeMap;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -45,6 +46,8 @@ pub struct TaskManagerInner {
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+
+    call_record: BTreeMap<usize, BTreeMap<usize, usize>>,
 }
 
 lazy_static! {
@@ -65,6 +68,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    call_record: Default::default(),
                 })
             },
         }
@@ -168,4 +172,27 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+/// 记录系统调用次数
+pub fn record_syscall(syscall_id: usize) {
+    let mut manager = TASK_MANAGER.inner.exclusive_access();
+    let task_id = manager.current_task;
+    manager
+        .call_record
+        .entry(task_id)
+        .and_modify(|x| {
+            x.entry(syscall_id).and_modify(|y| *y += 1).or_insert(1);
+        })
+        .or_default();
+}
+/// 查询系统调用次数
+pub fn get_syscall_records(syscall_id: usize) -> usize {
+    let manager = TASK_MANAGER.inner.exclusive_access();
+    let task_id = manager.current_task;
+    manager
+        .call_record
+        .get(&task_id)
+        .and_then(|x| x.get(&syscall_id))
+        .copied()
+        .unwrap_or(0)
 }
